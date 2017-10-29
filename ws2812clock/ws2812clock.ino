@@ -7,7 +7,7 @@ RTC_DS1307 rtc;
 
 
 #define P_LED 8
-
+#define P_SWITCH 10
 
 #ifdef __AVR__
   #include <avr/power.h>
@@ -39,6 +39,7 @@ void setup() {
 delay(200);
 
   pinMode(P_LED, OUTPUT);
+  pinMode(P_SWITCH, INPUT_PULLUP);
   strip.begin();
   strip.show(); // Initialize all pixels to 'off'
   
@@ -54,7 +55,7 @@ delay(200);
     // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     // This line sets the RTC with an explicit date & time, for example to set
     // January 21, 2014 at 3am you would call:
-    // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
+     rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
   }
 //     rtc.adjust(DateTime(2017, 10, 14, 21, 00, 00));
   
@@ -251,7 +252,7 @@ byte q = 0;
 byte blink = 0;
 byte sec = 255;
 int s10=0;
-void loop () {
+void yloop () {
     DateTime now = rtc.now();  
     if(sec != now.second()) {
       sec = now.second();
@@ -294,3 +295,176 @@ void loop () {
     delay(100);
 }
 
+typedef struct {
+    byte r;
+    byte g;
+    byte b;
+} POINT;
+
+POINT points[24];
+
+void clearPoints() {
+  memset(points, 0, sizeof(points));
+}
+
+
+/*
+
+*/
+void updateStrip() {
+  int l;
+  int p;
+  strip.clear();
+  for(l=0; l<12; ++l) {
+    p = 11-l;
+    strip.setPixelColor(p, strip.Color(points[l].g, points[l].r, points[l].b));
+  }
+  for(; l<24; ++l) {
+    p = 35-l;
+    strip.setPixelColor(p, strip.Color(points[l].g, points[l].r, points[l].b));
+  }
+  strip.show();
+}
+
+int l2p(int l) {
+  if(l<12) {
+    return 11-l;
+  }
+  else {
+    return 35-l;
+  }
+}
+
+#define MAX_BRI 128
+void point(float p) {
+  
+  /*
+  for(int i=0; i<23; ++i) {
+    int x = MAX_BRI - abs(MAX_BRI * (p-i))
+    if(x > 0) {
+      points[i].b = x;
+    }
+  }
+  */
+  
+  
+  
+  points[0].r = 255;
+}
+
+void wheel(byte p) {
+  for(int i=0; i<24; ++i) {
+    uint32_t col = Wheel(p);
+    byte g = col>>16;
+    byte r = col>>8;
+    byte b = col;
+    g/=8;
+    r/=8;
+    b/=8;
+    col = ((uint32_t)g) << 16;
+    col |= ((uint32_t)r) << 8;
+    col |= ((uint32_t)b);
+    strip.setPixelColor(i, col);
+    p++;
+  }
+}
+
+int g_hh = 0;
+int g_mm = 0;
+int g_ss = 0;
+int g_s10 = 0;
+unsigned long nextTick = 0;
+// hh is 0-11
+void getTime(int *hh, int *mm, int *ss, int *s10) {
+  unsigned long ms = millis();
+  if(nextTick < ms || ms < (nextTick - 1000)) {
+    if(++g_s10 >= 10) {
+      g_s10 = 0;
+      if(++g_ss >= 60) {
+        g_ss = 0;
+        if(++g_mm >= 60) {
+          g_mm = 0;
+          if(++g_hh >= 12) {
+            g_hh = 0;
+          }
+        }
+      }
+    }
+    nextTick = ms + 100;
+  }
+  *hh = g_hh;
+  *mm = g_mm;
+  *ss = g_ss;
+  *s10 = g_s10;
+}
+void setTime(int hh, int mm, int ss) {
+  g_hh = hh;
+  g_mm = mm;
+  g_ss = ss;
+  g_s10 = 0;
+}
+void incTime() {
+  int hh, mm, ss, s10;
+  getTime(&hh,&mm, &ss, &s10);
+  if(++mm >= 60) {
+    mm = 0;
+    if(++hh >= 12) {
+      hh = 0;
+    }
+  }
+  setTime(hh,mm,0);
+}
+
+unsigned int nextSec10 = 0;
+byte qq = 0;
+byte lastms = 0;
+int auto_repeat = 0;
+void loop () {
+    byte ms_tick = 0;
+    if(lastms != (byte)millis()) {
+      lastms = (byte)millis();
+      ms_tick = 1;
+    }
+    int hh,mm,ss,s10,i;
+    getTime(&hh,&mm,&ss,&s10);  
+    digitalWrite(P_LED,s10<1);
+    strip.clear();
+    wheel((mm*3600 + mm*600 + ss * 10 + s10));
+    
+    int hh_pos = hh * 2 + mm/30;
+    int mm_pos = mm * 24.0/60.0;
+    /*
+    i=mm;
+    if(i<0) i+= 24;
+    strip.setPixelColor(l2p(i), 0);
+    if(++i>23) i-=24;
+    mm = i;
+    if(++i>23) i-=24;
+    strip.setPixelColor(l2p(i), 0);
+
+    i=hh*2;
+    if(i<0) i+= 24;
+    strip.setPixelColor(l2p(i), 0);
+    if(++i>23) i-=24;
+    hh = i;
+    if(++i>23) i-=24;
+    strip.setPixelColor(l2p(i), 0);
+*/
+    strip.setPixelColor(l2p(mm_pos), strip.Color(200,255,0));
+    strip.setPixelColor(l2p(hh_pos), strip.Color(200,200,200));
+  
+    strip.show();  
+    if(digitalRead(P_SWITCH)) {
+      auto_repeat = 0;
+    }
+    else if(!auto_repeat) {
+      auto_repeat = 1;
+      incTime();
+    }
+    else if(ms_tick) {
+      if(++auto_repeat > 1000) {
+        auto_repeat = 990;
+        incTime();
+      }
+    }
+}
